@@ -27,6 +27,7 @@ enum Route: Equatable { case decoyLock, notes, landing, gate1, setup, gate2, vau
     private var generation: UInt64 = 0
     private let importer = PhotosImporter()
     private var pendingExportNotice: String?
+    private var isAuthenticating = false
 
     init(auth: DeviceAuthenticating? = nil, store: MediaStore? = nil, credentials: Credentials? = nil) {
         self.auth = auth ?? DeviceAuthentication()
@@ -55,6 +56,8 @@ enum Route: Equatable { case decoyLock, notes, landing, gate1, setup, gate2, vau
         let current = SessionLease()
         lease = current
         route = .gate1
+        isAuthenticating = true
+        defer { isAuthenticating = false }
         do {
             guard try await auth.authenticate() else { throw VaultError.locked }
             guard ticket == generation, route == .gate1, lease === current else { return }
@@ -122,6 +125,7 @@ enum Route: Equatable { case decoyLock, notes, landing, gate1, setup, gate2, vau
     }
     /// Called synchronously after the native privacy cover has been installed.
     func lock() {
+        guard !isAuthenticating else { return }
         generation &+= 1
         route = .decoyLock
         gate1Succeeded = false
