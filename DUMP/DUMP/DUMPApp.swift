@@ -3,7 +3,10 @@ import SwiftUI
 @main
 @MainActor
 struct DUMPApp: App {
-    @UIApplicationDelegateAdaptor(PrivacyDelegate.self) private var delegate
+
+    @UIApplicationDelegateAdaptor(PrivacyDelegate.self)
+    private var delegate
+
     @StateObject private var model = AppModel()
 
     var body: some Scene {
@@ -25,6 +28,8 @@ final class PrivacyDelegate: NSObject, UIApplicationDelegate {
     private var observers: [NSObjectProtocol] = []
     private let shieldTag = 70020715
 
+    // MARK: - Launch
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions:
@@ -32,39 +37,46 @@ final class PrivacyDelegate: NSObject, UIApplicationDelegate {
     ) -> Bool {
 
         /*
-         SECURITY / FACE ID BEHAVIOR
+         TEMPORARILY INACTIVE
 
-         willDeactivate:
-             Show the privacy shield immediately.
-             DO NOT lock/cancel authentication here.
+         Face ID and other system interfaces can cause the scene
+         to temporarily deactivate.
 
-         didEnterBackground:
-             This is a real background transition.
-             Lock the vault and invalidate the session.
-
-         This prevents Face ID/system UI transitions from cancelling
-         their own LAContext while still protecting the app when it
-         genuinely enters the background.
+         We protect what is visible with the privacy shield,
+         but DO NOT destroy the authentication session.
          */
-
         observers.append(
             NotificationCenter.default.addObserver(
                 forName: UIScene.willDeactivateNotification,
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
+
                 MainActor.assumeIsolated {
                     self?.cover()
                 }
             }
         )
 
+        /*
+         ACTUAL BACKGROUND
+
+         This is a genuine security transition.
+
+         Now we:
+         - cover the UI
+         - invalidate the session
+         - cancel authentication
+         - revoke the lease
+         - return to the decoy lock
+         */
         observers.append(
             NotificationCenter.default.addObserver(
                 forName: UIScene.didEnterBackgroundNotification,
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
+
                 MainActor.assumeIsolated {
                     self?.cover()
                     self?.model?.lock()
@@ -72,36 +84,55 @@ final class PrivacyDelegate: NSObject, UIApplicationDelegate {
             }
         )
 
+        /*
+         SCENE ACTIVE AGAIN
+
+         Face ID can cause temporary scene inactivity.
+
+         When the scene becomes active again, remove the privacy
+         shield immediately unless screen capture is active.
+
+         IMPORTANT:
+         We deliberately do NOT check
+         UIApplication.shared.applicationState here before uncovering.
+         UIScene.didActivateNotification already tells us that this
+         scene has become active.
+         */
         observers.append(
             NotificationCenter.default.addObserver(
                 forName: UIScene.didActivateNotification,
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
+
                 MainActor.assumeIsolated {
-                    self?.refreshCapture()
+                    self?.sceneDidActivate()
                 }
             }
         )
 
+        // Screen recording / mirroring state changed.
         observers.append(
             NotificationCenter.default.addObserver(
                 forName: UIScreen.capturedDidChangeNotification,
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
+
                 MainActor.assumeIsolated {
                     self?.refreshCapture()
                 }
             }
         )
 
+        // Screenshot warning.
         observers.append(
             NotificationCenter.default.addObserver(
                 forName: UIApplication.userDidTakeScreenshotNotification,
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
+
                 MainActor.assumeIsolated {
                     self?.showScreenshotNotice()
                 }
@@ -111,7 +142,10 @@ final class PrivacyDelegate: NSObject, UIApplicationDelegate {
         return true
     }
 
+    // MARK: - Windows
+
     private var windows: [UIWindow] {
+
         UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows)
@@ -120,36 +154,50 @@ final class PrivacyDelegate: NSObject, UIApplicationDelegate {
     // MARK: - Privacy Shield
 
     private func cover() {
-        for window in windows where window.viewWithTag(shieldTag) == nil {
 
-            let shield = UIView(frame: window.bounds)
+        for window in windows
+        where window.viewWithTag(shieldTag) == nil {
+
+            let shield = UIView(
+                frame: window.bounds
+            )
 
             shield.tag = shieldTag
-            shield.backgroundColor = .systemBackground
+
+            shield.backgroundColor =
+                .systemBackground
+
             shield.autoresizingMask = [
                 .flexibleWidth,
                 .flexibleHeight
             ]
+
             shield.isUserInteractionEnabled = true
 
             let label = UILabel()
 
             label.text = "DUMP"
+
             label.font = .systemFont(
                 ofSize: 28,
                 weight: .semibold
             )
 
-            label.translatesAutoresizingMaskIntoConstraints = false
+            label.translatesAutoresizingMaskIntoConstraints =
+                false
 
             shield.addSubview(label)
 
             NSLayoutConstraint.activate([
+
                 label.centerXAnchor.constraint(
-                    equalTo: shield.centerXAnchor
+                    equalTo:
+                        shield.centerXAnchor
                 ),
+
                 label.centerYAnchor.constraint(
-                    equalTo: shield.centerYAnchor
+                    equalTo:
+                        shield.centerYAnchor
                 )
             ])
 
@@ -160,9 +208,67 @@ final class PrivacyDelegate: NSObject, UIApplicationDelegate {
     }
 
     private func uncover() {
+
         windows.forEach {
+
             $0.viewWithTag(shieldTag)?
                 .removeFromSuperview()
+        }
+    }
+
+    // MARK: - Scene Activation
+
+    private func sceneDidActivate() {
+
+        /*
+         If the screen is actively being captured,
+         never reveal DUMP.
+         */
+        if UIScreen.screens.contains(
+            where: \.isCaptured
+        ) {
+
+            cover()
+
+            model?.lock()
+
+        } else {
+
+            /*
+             The scene has explicitly reported that it is active.
+
+             Remove the native privacy shield immediately.
+
+             This is especially important after Face ID succeeds:
+             the SwiftUI interface underneath may already have moved
+             from Gate 1 to Setup/Gate 2.
+             */
+            uncover()
+        }
+    }
+
+    // MARK: - Screen Capture
+
+    func refreshCapture() {
+
+        if UIScreen.screens.contains(
+            where: \.isCaptured
+        ) {
+
+            cover()
+
+            model?.lock()
+
+            return
+        }
+
+        /*
+         This method can also be called from onAppear, where checking
+         the application state is appropriate.
+         */
+        if UIApplication.shared.applicationState == .active {
+
+            uncover()
         }
     }
 
@@ -170,9 +276,18 @@ final class PrivacyDelegate: NSObject, UIApplicationDelegate {
 
     private func showScreenshotNotice() {
 
-        guard UIApplication.shared.applicationState == .active,
-              !UIScreen.screens.contains(where: \.isCaptured),
-              let window = windows.first(where: \.isKeyWindow)
+        guard
+            UIApplication.shared.applicationState == .active,
+
+            !UIScreen.screens.contains(
+                where: \.isCaptured
+            ),
+
+            let window =
+                windows.first(
+                    where: \.isKeyWindow
+                )
+
         else {
             return
         }
@@ -183,34 +298,44 @@ final class PrivacyDelegate: NSObject, UIApplicationDelegate {
             "Screenshot detected. iOS has already captured this screen."
 
         notice.numberOfLines = 0
-        notice.textAlignment = .center
+
+        notice.textAlignment =
+            .center
 
         notice.font =
-            .preferredFont(forTextStyle: .footnote)
+            .preferredFont(
+                forTextStyle: .footnote
+            )
 
         notice.backgroundColor =
             .secondarySystemBackground
 
         notice.layer.cornerRadius = 14
+
         notice.clipsToBounds = true
 
-        notice.translatesAutoresizingMaskIntoConstraints = false
+        notice.translatesAutoresizingMaskIntoConstraints =
+            false
 
         window.addSubview(notice)
 
         NSLayoutConstraint.activate([
+
             notice.leadingAnchor.constraint(
-                equalTo: window.safeAreaLayoutGuide.leadingAnchor,
+                equalTo:
+                    window.safeAreaLayoutGuide.leadingAnchor,
                 constant: 16
             ),
 
             notice.trailingAnchor.constraint(
-                equalTo: window.safeAreaLayoutGuide.trailingAnchor,
+                equalTo:
+                    window.safeAreaLayoutGuide.trailingAnchor,
                 constant: -16
             ),
 
             notice.topAnchor.constraint(
-                equalTo: window.safeAreaLayoutGuide.topAnchor,
+                equalTo:
+                    window.safeAreaLayoutGuide.topAnchor,
                 constant: 8
             ),
 
@@ -227,6 +352,7 @@ final class PrivacyDelegate: NSObject, UIApplicationDelegate {
         DispatchQueue.main.asyncAfter(
             deadline: .now() + 6
         ) {
+
             notice.removeFromSuperview()
         }
     }
@@ -236,16 +362,13 @@ final class PrivacyDelegate: NSObject, UIApplicationDelegate {
     func applicationWillResignActive(
         _ application: UIApplication
     ) {
+
         /*
-         IMPORTANT:
+         DO NOT call model.lock() here.
 
-         Only install the privacy shield here.
+         Face ID can temporarily make the application inactive.
 
-         Do NOT call model.lock().
-
-         Face ID and other system authentication UI can cause
-         temporary inactivity. Cancelling LAContext here can prevent
-         Face ID from ever beginning its scan.
+         We only hide the contents.
          */
         cover()
     }
@@ -253,37 +376,26 @@ final class PrivacyDelegate: NSObject, UIApplicationDelegate {
     func applicationDidEnterBackground(
         _ application: UIApplication
     ) {
-        /*
-         This is an actual background transition.
 
-         Now invalidate the security session.
+        /*
+         Genuine background transition.
+
+         This is where the security session must be destroyed.
          */
         cover()
+
         model?.lock()
     }
 
     func applicationDidBecomeActive(
         _ application: UIApplication
     ) {
-        refreshCapture()
-    }
 
-    // MARK: - Screen Capture
+        /*
+         The application is active again.
 
-    func refreshCapture() {
-
-        if UIScreen.screens.contains(where: \.isCaptured) {
-
-            /*
-             Active screen recording/capture is treated as a real
-             security lock.
-             */
-            cover()
-            model?.lock()
-
-        } else if UIApplication.shared.applicationState == .active {
-
-            uncover()
-        }
+         Remove the shield unless screen capture is active.
+         */
+        sceneDidActivate()
     }
 }
