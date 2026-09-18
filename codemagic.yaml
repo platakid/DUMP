@@ -1,0 +1,45 @@
+# Manual workflows: committing this file does not start builds or publish an app.
+workflows:
+  dump-ios-check:
+    name: DUMP - Build and test (no signing needed)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      xcode: latest
+    scripts:
+      - name: Check project and resolve Swift packages
+        script: bash ci/codemagic.sh prepare
+      - name: Build and run XCTest on an available iPhone simulator
+        script: bash ci/codemagic.sh test
+      - name: Package the simulator app
+        script: bash ci/codemagic.sh package
+    artifacts:
+      - build/artifacts/*.zip
+      - build/results/*.xcresult
+      - build/logs/*.log
+
+  dump-ios-development:
+    name: DUMP - Signed iPhone app (Apple credentials required)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      xcode: latest
+      ios_signing:
+        distribution_type: development
+        bundle_identifier: local.dump.app
+    scripts:
+      - name: Check project and resolve Swift packages
+        script: bash ci/codemagic.sh prepare
+      - name: Build and run XCTest before packaging
+        script: bash ci/codemagic.sh test
+      - name: Apply the uploaded Apple development signing profile
+        script: xcode-project use-profiles
+      - name: Create the signed IPA
+        script: |
+          set -euo pipefail
+          xcode-project build-ipa --project DUMP.xcodeproj --scheme DUMP
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - build/results/*.xcresult
+      - build/logs/*.log
+      - /tmp/xcodebuild_logs/*.log

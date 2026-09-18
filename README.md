@@ -6,6 +6,8 @@ iPhone-only SwiftUI source project, targeting iOS 17 or later. Native UIKit is u
 
 ## Open and run
 
+**Building without a Mac:** see [CODEMAGIC.md](CODEMAGIC.md). Start with the unsigned simulator build/test workflow; an installable iPhone IPA additionally requires Apple signing credentials.
+
 1. Copy this folder to a Mac with Xcode 16 or later.
 2. Open `DUMP.xcodeproj`. Allow Swift Package Manager to resolve the pinned sodium dependency.
 3. Select the DUMP target, set a unique bundle identifier and your signing team, and select an iPhone. The iPhone must have a device passcode.
