@@ -20,10 +20,14 @@ struct Note: Codable, Identifiable {
             var values = URLResourceValues(); values.isExcludedFromBackup = true
             try excluded.setResourceValues(values)
             let destination = folder.appendingPathComponent("notes.json")
+            let loaded: [Note]
             if FileManager.default.fileExists(atPath: destination.path) {
-                notes = try JSONDecoder().decode([Note].self, from: Data(contentsOf: destination))
+                loaded = try JSONDecoder().decode([Note].self, from: Data(contentsOf: destination))
+            } else {
+                loaded = []
             }
             url = destination
+            notes = loaded
         } catch { url = nil; self.error = "Notes could not be loaded." }
     }
     func save(id: UUID, text: String) {
