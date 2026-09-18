@@ -35,7 +35,7 @@ case "${1:-}" in
       -clonedSourcePackagesDirPath "$packages" \
       -resultBundlePath "build/results/DUMP-${CM_BUILD_ID:-local-$(date +%s)}.xcresult" \
       -parallel-testing-enabled NO \
-      CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+      ONLY_ACTIVE_ARCH=YES CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
       2>&1 | tee build/logs/tests.log
     ;;
   package)
